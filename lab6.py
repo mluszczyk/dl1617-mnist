@@ -117,9 +117,11 @@ class BatchNormalization:
         assert len(input_shape) == 4
         mean = tf.reduce_mean(signal, axis=[0, 1, 2])
         assert len(mean.get_shape()) == 1
-        stdvarsq = tf.reduce_mean((signal - mean) ** 2)
+        stdvarsq = tf.reduce_mean((signal - mean) ** 2, axis=[0, 1, 2])
+        assert len(stdvarsq.get_shape()) == 1
         eps = 1e-5
         normalized = ((signal - mean) / tf.sqrt(stdvarsq + eps))
+        assert (str(normalized.get_shape()) == str(input_shape))
         return tf.multiply(gamma, normalized) + beta
 
 
@@ -136,24 +138,16 @@ class MnistTrainer:
 
         layers_list = [
             Reshape([-1, 28, 28, 1]),
-            BatchNormalization(),
-            Conv(16),
-            Relu(),
-            MaxPool(),
-            BatchNormalization(),
             Conv(32),
+            BatchNormalization(),
             Relu(),
             MaxPool(),
-            BatchNormalization(),
             Conv(64),
-            Relu(),
-            MaxPool(),
             BatchNormalization(),
-            Conv(128),
             Relu(),
             MaxPool(),
-            Reshape([-1, 2 * 2 * 128]),
-            FullyConnected(64),
+            Reshape([-1, 7 * 7 * 64]),
+            FullyConnected(1024),
             Relu(),
             FullyConnected(10)
         ]
