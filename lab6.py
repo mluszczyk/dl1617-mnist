@@ -106,6 +106,24 @@ class MaxPool:
         return max_pool_2x2(signal)
 
 
+class BatchNormalization:
+    def contribute(self, signal, idx):
+        input_shape = signal.get_shape()
+
+        with tf.variable_scope('batch_norm_' + str(idx + 1)):
+            gamma = weight_variable([int(input_shape[-1])])
+            beta = bias_variable([int(input_shape[-1])])
+
+        assert len(input_shape) == 4
+        mean = tf.reduce_mean(signal, axis=[0, 1, 2])
+        assert len(mean.get_shape()) == 1
+        stdvarsq = tf.reduce_mean((signal - mean) ** 2)
+        eps = 1e-5
+        normalized = ((signal - mean) / tf.sqrt(stdvarsq + eps))
+        return tf.multiply(gamma, normalized) + beta
+
+
+
 class MnistTrainer:
     def train_on_batch(self, batch_xs, batch_ys):
         results = self.sess.run([self.train_step, self.loss, self.accuracy],
@@ -117,8 +135,24 @@ class MnistTrainer:
         self.y_target = tf.placeholder(tf.float32, [None, 10])
 
         layers_list = [
-            FullyConnected(64),
+            Reshape([-1, 28, 28, 1]),
+            BatchNormalization(),
+            Conv(16),
             Relu(),
+            MaxPool(),
+            BatchNormalization(),
+            Conv(32),
+            Relu(),
+            MaxPool(),
+            BatchNormalization(),
+            Conv(64),
+            Relu(),
+            MaxPool(),
+            BatchNormalization(),
+            Conv(128),
+            Relu(),
+            MaxPool(),
+            Reshape([-1, 2 * 2 * 128]),
             FullyConnected(64),
             Relu(),
             FullyConnected(10)
@@ -133,7 +167,7 @@ class MnistTrainer:
         self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=signal, labels=self.y_target))
         self.accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(self.y_target, axis=1), tf.argmax(signal, axis=1)), tf.float32))
 
-        self.train_step = tf.train.MomentumOptimizer(0.05, momentum=0.9).minimize(self.loss)
+        self.train_step = tf.train.AdamOptimizer(1e-4).minimize(self.loss)
 
         print('list of variables', list(map(lambda x: x.name, tf.global_variables())))
 
