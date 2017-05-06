@@ -3,7 +3,9 @@ import numpy as np
 import math
 from tensorflow.examples.tutorials.mnist import input_data
 import os
- 
+
+from tensorflow.python.training.saver import Saver
+
 ''''
 
 Link to lecture slides: 
@@ -125,7 +127,6 @@ class BatchNormalization:
         return tf.multiply(gamma, normalized) + beta
 
 
-
 class MnistTrainer:
     def train_on_batch(self, batch_xs, batch_ys):
         results = self.sess.run([self.train_step, self.loss, self.accuracy],
@@ -170,6 +171,8 @@ class MnistTrainer:
         self.create_model()
         mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
+        saver = Saver()
+
         with tf.Session() as self.sess:
             tf.global_variables_initializer().run()  # initialize variables
             batches_n = 100000
@@ -192,6 +195,7 @@ class MnistTrainer:
                                                             feed_dict={self.x: mnist.test.images,
                                                                        self.y_target: mnist.test.labels}))
 
+                        saver.save(self.sess, "checkpoint", global_step=batch_idx)
  
             except KeyboardInterrupt:
                 print('Stopping training!')
