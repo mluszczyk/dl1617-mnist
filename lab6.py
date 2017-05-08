@@ -1,9 +1,6 @@
-import tensorflow as tf
 import numpy as np
-import math
+import tensorflow as tf
 from tensorflow.examples.tutorials.mnist import input_data
-import os
-
 from tensorflow.python.training.saver import Saver
 
 ''''
@@ -44,33 +41,35 @@ To get more meaningful experience with training convnets use the CIFAR dataset.
 '''
 
 
-def weight_variable(shape, stddev=0.1):
+def weight_variable(shape, *, trainable, stddev=0.1):
     initializer = tf.truncated_normal(shape, stddev=stddev)
-    return tf.Variable(initializer, name='weight')
+    return tf.Variable(initializer, name='weight', trainable=trainable)
 
 
-def bias_variable(shape, bias=0.1):
+def bias_variable(shape, *, trainable, bias=0.1):
     initializer = tf.constant(bias, shape=shape)
-    return tf.Variable(initializer, name='bias')
+    return tf.Variable(initializer, name='bias', trainable=trainable)
 
 
 class FullyConnected:
     def __init__(self, neuron_num):
         self.neuron_num = neuron_num
 
-    def contribute(self, signal, idx):
+    def contribute(self, signal, idx, trainable, save_variable):
         cur_num_neurons = int(signal.get_shape()[1])
         stddev = 0.1
         with tf.variable_scope('fc_' + str(idx + 1)):
-            W_fc = weight_variable([cur_num_neurons, self.neuron_num], stddev)
-            b_fc = bias_variable([self.neuron_num], 0.1)
+            W_fc = weight_variable([cur_num_neurons, self.neuron_num], stddev=stddev, trainable=trainable)
+            save_variable(W_fc)
+            b_fc = bias_variable([self.neuron_num], bias=0.1, trainable=trainable)
+            save_variable(b_fc)
 
         signal = tf.matmul(signal, W_fc) + b_fc
         return signal
 
 
 class Relu:
-    def contribute(self, signal, idx):
+    def contribute(self, signal, idx, trainable, save_variable):
         return tf.nn.relu(signal)
 
 
@@ -78,7 +77,7 @@ class Reshape:
     def __init__(self, output_shape):
         self.output_shape = output_shape
 
-    def contribute(self, signal, idx):
+    def contribute(self, signal, idx, trainable, save_variable):
         return tf.reshape(signal, self.output_shape)
 
 
@@ -86,7 +85,7 @@ class Conv:
     def __init__(self, output_channels: int):
         self.output_channels = output_channels
 
-    def contribute(self, signal, idx):
+    def contribute(self, signal, idx, trainable, save_variable):
         def conv2d(x, W):
             return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
 
@@ -94,14 +93,16 @@ class Conv:
         input_channels = int(signal.get_shape()[3])
 
         with tf.variable_scope('conv_' + str(idx + 1)):
-            W_conv1 = weight_variable([5, 5, input_channels, self.output_channels])
-            b_conv1 = bias_variable([self.output_channels])
+            W_conv1 = weight_variable([5, 5, input_channels, self.output_channels], trainable=trainable)
+            save_variable(W_conv1)
+            b_conv1 = bias_variable([self.output_channels], trainable=trainable)
+            save_variable(b_conv1)
 
         return conv2d(signal, W_conv1) + b_conv1
 
 
 class MaxPool:
-    def contribute(self, signal, idx):
+    def contribute(self, signal, idx, trainable, save_variable):
         def max_pool_2x2(x):
             return tf.nn.max_pool(x, ksize=[1, 2, 2, 1],
                                   strides=[1, 2, 2, 1], padding='SAME')
@@ -109,12 +110,14 @@ class MaxPool:
 
 
 class BatchNormalization:
-    def contribute(self, signal, idx):
+    def contribute(self, signal, idx, trainable, save_variable):
         input_shape = signal.get_shape()
 
         with tf.variable_scope('batch_norm_' + str(idx + 1)):
-            gamma = weight_variable([int(input_shape[-1])])
-            beta = bias_variable([int(input_shape[-1])])
+            gamma = weight_variable([int(input_shape[-1])], trainable=trainable)
+            save_variable(gamma)
+            beta = bias_variable([int(input_shape[-1])], trainable=trainable)
+            save_variable(beta)
 
         assert len(input_shape) == 4
         mean = tf.reduce_mean(signal, axis=[0, 1, 2])
@@ -127,13 +130,21 @@ class BatchNormalization:
         return tf.multiply(gamma, normalized) + beta
 
 
+class VariableSaver:
+    def __init__(self):
+        self.var_list = []
+
+    def save_variable(self, var):
+        self.var_list.append(var)
+
+
 class MnistTrainer:
     def train_on_batch(self, batch_xs, batch_ys):
         results = self.sess.run([self.train_step, self.loss, self.accuracy],
                                 feed_dict={self.x: batch_xs, self.y_target: batch_ys})
         return results[1:]
 
-    def create_model(self):
+    def create_model(self, *, trainable):
         self.x = tf.placeholder(tf.float32, [None, 784], name='x')
         self.y_target = tf.placeholder(tf.float32, [None, 10])
 
@@ -153,10 +164,12 @@ class MnistTrainer:
             FullyConnected(10)
         ]
 
+        self.variable_saver = VariableSaver()
+
         signal = self.x
         print('shape', signal.get_shape())
         for idx, layer in enumerate(layers_list):
-            signal = layer.contribute(signal, idx)
+            signal = layer.contribute(signal, idx, trainable, self.variable_saver.save_variable)
             print('shape', signal.get_shape())
 
         self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=signal, labels=self.y_target))
@@ -168,10 +181,10 @@ class MnistTrainer:
 
     def train(self):
 
-        self.create_model()
+        self.create_model(trainable=True)
         mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
-        saver = Saver()
+        saver = Saver(var_list=self.variable_saver.var_list)
 
         with tf.Session() as self.sess:
             tf.global_variables_initializer().run()  # initialize variables
@@ -195,7 +208,7 @@ class MnistTrainer:
                                                             feed_dict={self.x: mnist.test.images,
                                                                        self.y_target: mnist.test.labels}))
 
-                        saver.save(self.sess, "checkpoint", global_step=batch_idx)
+                        saver.save(self.sess, "checkpoint-mnist")
  
             except KeyboardInterrupt:
                 print('Stopping training!')
@@ -204,8 +217,8 @@ class MnistTrainer:
             # Test trained model
             print('Test results', self.sess.run([self.loss, self.accuracy], feed_dict={self.x: mnist.test.images,
                                                 self.y_target: mnist.test.labels}))
- 
- 
+
+
 if __name__ == '__main__':
     trainer = MnistTrainer()
     trainer.train()
