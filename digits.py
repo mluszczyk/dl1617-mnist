@@ -1,12 +1,15 @@
+"""Generate file digits.json containing the images that maximize the probability
+for each digit.
+"""
+
+
 import json
 
-import numpy
 import numpy as np
 import tensorflow as tf
-from tensorflow.examples.tutorials.mnist import input_data
 from tensorflow.python.training.saver import Saver
 
-from lab6 import Reshape, Conv, BatchNormalization, Relu, MaxPool, FullyConnected, VariableSaver
+from model import create_model, CHECKPOINT_FILE_NAME
 
 
 class DigitTrainer:
@@ -19,49 +22,19 @@ class DigitTrainer:
         self.x = tf.Variable(initializer, name='x_learnable')
         self.y_target = tf.stack(tf.one_hot(list(range(10)), 10, dtype=tf.float32))
 
-        layers_list = [
-            Reshape([-1, 28, 28, 1]),
-            Conv(32),
-            BatchNormalization(),
-            Relu(),
-            MaxPool(),
-            Conv(64),
-            BatchNormalization(),
-            Relu(),
-            MaxPool(),
-            Reshape([-1, 7 * 7 * 64]),
-            FullyConnected(1024),
-            Relu(),
-            FullyConnected(10)
-        ]
-
-        self.variable_saver = VariableSaver()
-
-        signal = self.x
-        print('shape', signal.get_shape())
-        for idx, layer in enumerate(layers_list):
-            signal = layer.contribute(signal, idx, trainable, self.variable_saver.save_variable)
-            print('shape', signal.get_shape())
-
-        print(self.variable_saver.var_list)
-
-        self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=signal, labels=self.y_target))
-        self.accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(self.y_target, axis=1), tf.argmax(signal, axis=1)), tf.float32))
-
-        self.train_step = tf.train.AdamOptimizer(1e-4).minimize(self.loss)
+        self.var_list, self.loss, self.accuracy, self.train_step, y_prob = create_model(trainable, self.x, self.y_target)
 
         print('list of variables', list(map(lambda x: x.name, tf.global_variables())))
 
     def train(self):
 
         self.create_model(trainable=False)
-        mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
-        saver = Saver(var_list=self.variable_saver.var_list)
+        saver = Saver(var_list=self.var_list)
 
         with tf.Session() as self.sess:
             tf.global_variables_initializer().run()  # initialize variables
-            saver.restore(self.sess, "checkpoint-mnist")
+            saver.restore(self.sess, CHECKPOINT_FILE_NAME)
 
             batches_n = 10000
 

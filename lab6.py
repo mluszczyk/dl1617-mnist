@@ -1,141 +1,13 @@
+"""Train the model on MNIST dataset."""
+
+import os
+
 import numpy as np
 import tensorflow as tf
 from tensorflow.examples.tutorials.mnist import input_data
 from tensorflow.python.training.saver import Saver
 
-''''
-
-Link to lecture slides: 
-https://docs.google.com/presentation/d/1Vh8NPCWkgVy_I79aqjHyDnlp7TNmVfaEqfIc4LAM-JM/edit?usp=sharing
-
-
-Tasks:
-1. Check that the given implementation reaches 95% test accuracy for
-   architecture input-64-64-10 in a few thousand batches.
-
-2. Improve initialization and check that the network learns much faster
-   and reaches over 97% test accuracy.
-
-3. Check, that with proper initialization we can train architecture input-64-64-64-64-64-10,
-   while with bad initialization it does not even get off the ground.
-
-4. If you do not feel comfortable enough with training networks and/or tensorflow I suggest adding
-dropout implemented in tensorflow (check documentation, new placeholder will be needed to indicate train/test phase).
-
-5. Check that with 10 hidden layers (64 units each) even with proper initialization
-   the network has a hard time to start learning.
-
-6. Implement batch normalization (use train mode also for testing - it should perform well enough):
-    * compute batch mean and variance as tensorflow operations,
-    * add new variables beta and gamma to scale and shift the result,
-    * check that the networks learns much faster for 5 layers (even though training time per batch is a bit longer),
-    * check that the network learns even for 10 hidden layers.
-
-Bonus task:
-
-Design and implement in tensorflow (by using tensorflow functions) a simple convnet and achieve 99% test accuracy.
-
-Note:
-This is an exemplary exercise. MNIST dataset is very simple and we are using it here to get resuts quickly.
-To get more meaningful experience with training convnets use the CIFAR dataset.
-'''
-
-
-def weight_variable(shape, *, trainable, stddev=0.1):
-    initializer = tf.truncated_normal(shape, stddev=stddev)
-    return tf.Variable(initializer, name='weight', trainable=trainable)
-
-
-def bias_variable(shape, *, trainable, bias=0.1):
-    initializer = tf.constant(bias, shape=shape)
-    return tf.Variable(initializer, name='bias', trainable=trainable)
-
-
-class FullyConnected:
-    def __init__(self, neuron_num):
-        self.neuron_num = neuron_num
-
-    def contribute(self, signal, idx, trainable, save_variable):
-        cur_num_neurons = int(signal.get_shape()[1])
-        stddev = 0.1
-        with tf.variable_scope('fc_' + str(idx + 1)):
-            W_fc = weight_variable([cur_num_neurons, self.neuron_num], stddev=stddev, trainable=trainable)
-            save_variable(W_fc)
-            b_fc = bias_variable([self.neuron_num], bias=0.1, trainable=trainable)
-            save_variable(b_fc)
-
-        signal = tf.matmul(signal, W_fc) + b_fc
-        return signal
-
-
-class Relu:
-    def contribute(self, signal, idx, trainable, save_variable):
-        return tf.nn.relu(signal)
-
-
-class Reshape:
-    def __init__(self, output_shape):
-        self.output_shape = output_shape
-
-    def contribute(self, signal, idx, trainable, save_variable):
-        return tf.reshape(signal, self.output_shape)
-
-
-class Conv:
-    def __init__(self, output_channels: int):
-        self.output_channels = output_channels
-
-    def contribute(self, signal, idx, trainable, save_variable):
-        def conv2d(x, W):
-            return tf.nn.conv2d(x, W, strides=[1, 1, 1, 1], padding='SAME')
-
-        assert len(signal.get_shape()) == 4
-        input_channels = int(signal.get_shape()[3])
-
-        with tf.variable_scope('conv_' + str(idx + 1)):
-            W_conv1 = weight_variable([5, 5, input_channels, self.output_channels], trainable=trainable)
-            save_variable(W_conv1)
-            b_conv1 = bias_variable([self.output_channels], trainable=trainable)
-            save_variable(b_conv1)
-
-        return conv2d(signal, W_conv1) + b_conv1
-
-
-class MaxPool:
-    def contribute(self, signal, idx, trainable, save_variable):
-        def max_pool_2x2(x):
-            return tf.nn.max_pool(x, ksize=[1, 2, 2, 1],
-                                  strides=[1, 2, 2, 1], padding='SAME')
-        return max_pool_2x2(signal)
-
-
-class BatchNormalization:
-    def contribute(self, signal, idx, trainable, save_variable):
-        input_shape = signal.get_shape()
-
-        with tf.variable_scope('batch_norm_' + str(idx + 1)):
-            gamma = weight_variable([int(input_shape[-1])], trainable=trainable)
-            save_variable(gamma)
-            beta = bias_variable([int(input_shape[-1])], trainable=trainable)
-            save_variable(beta)
-
-        assert len(input_shape) == 4
-        mean = tf.reduce_mean(signal, axis=[0, 1, 2])
-        assert len(mean.get_shape()) == 1
-        stdvarsq = tf.reduce_mean((signal - mean) ** 2, axis=[0, 1, 2])
-        assert len(stdvarsq.get_shape()) == 1
-        eps = 1e-5
-        normalized = ((signal - mean) / tf.sqrt(stdvarsq + eps))
-        assert (str(normalized.get_shape()) == str(input_shape))
-        return tf.multiply(gamma, normalized) + beta
-
-
-class VariableSaver:
-    def __init__(self):
-        self.var_list = []
-
-    def save_variable(self, var):
-        self.var_list.append(var)
+from model import create_model, CHECKPOINT_FILE_NAME
 
 
 class MnistTrainer:
@@ -148,34 +20,7 @@ class MnistTrainer:
         self.x = tf.placeholder(tf.float32, [None, 784], name='x')
         self.y_target = tf.placeholder(tf.float32, [None, 10])
 
-        layers_list = [
-            Reshape([-1, 28, 28, 1]),
-            Conv(32),
-            BatchNormalization(),
-            Relu(),
-            MaxPool(),
-            Conv(64),
-            BatchNormalization(),
-            Relu(),
-            MaxPool(),
-            Reshape([-1, 7 * 7 * 64]),
-            FullyConnected(1024),
-            Relu(),
-            FullyConnected(10)
-        ]
-
-        self.variable_saver = VariableSaver()
-
-        signal = self.x
-        print('shape', signal.get_shape())
-        for idx, layer in enumerate(layers_list):
-            signal = layer.contribute(signal, idx, trainable, self.variable_saver.save_variable)
-            print('shape', signal.get_shape())
-
-        self.loss = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(logits=signal, labels=self.y_target))
-        self.accuracy = tf.reduce_mean(tf.cast(tf.equal(tf.argmax(self.y_target, axis=1), tf.argmax(signal, axis=1)), tf.float32))
-
-        self.train_step = tf.train.AdamOptimizer(1e-4).minimize(self.loss)
+        self.var_list, self.loss, self.accuracy, self.train_step, y_prob = create_model(trainable, self.x, self.y_target)
 
         print('list of variables', list(map(lambda x: x.name, tf.global_variables())))
 
@@ -184,10 +29,17 @@ class MnistTrainer:
         self.create_model(trainable=True)
         mnist = input_data.read_data_sets("MNIST_data/", one_hot=True)
 
-        saver = Saver(var_list=self.variable_saver.var_list)
+        saver = Saver(var_list=self.var_list)
 
         with tf.Session() as self.sess:
             tf.global_variables_initializer().run()  # initialize variables
+
+            if os.path.exists(CHECKPOINT_FILE_NAME + ".meta"):
+                print("Restoring existing weights")
+                saver.restore(self.sess, CHECKPOINT_FILE_NAME)
+            else:
+                print("Training a new model")
+
             batches_n = 100000
             mb_size = 128
 
@@ -208,7 +60,7 @@ class MnistTrainer:
                                                             feed_dict={self.x: mnist.test.images,
                                                                        self.y_target: mnist.test.labels}))
 
-                        saver.save(self.sess, "checkpoint-mnist")
+                        saver.save(self.sess, CHECKPOINT_FILE_NAME)
  
             except KeyboardInterrupt:
                 print('Stopping training!')
